@@ -21,6 +21,22 @@ public:
     sendCommand(0x03); // LCD ON
   }
 
+  void lcdOff() {
+    sendCommand(0x02); // LCD OFF
+  }
+
+  void lcdOn() {
+    sendCommand(0x03); // LCD ON
+  }
+
+  void sysOff() {
+    sendCommand(0x00); // System Disable
+  }
+
+  void sysOn() {
+    sendCommand(0x01); // System Enable
+  }
+
   void clear() {
     for (byte i = 0; i < 16; i++) {
       write(i * 2, 0x00);

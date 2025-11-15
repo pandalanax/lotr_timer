@@ -34,7 +34,7 @@ unsigned long debounceDelay = 50;
 
 // Sleep and activity management
 unsigned long lastActivityTime = 0;
-const unsigned long awakeTimeout = 15000; // Stay awake for 15 seconds of inactivity
+const unsigned long awakeTimeout = 10000; // Stay awake for 15 seconds of inactivity
 
 // ISR for waking up from sleep
 void wakeUp() {
@@ -43,23 +43,45 @@ void wakeUp() {
 }
 
 void goToSleep() {
-  // This function prepares for and enters sleep.
-  updateDisplay(); // Final display update before sleeping
+  display.lcdOff(); // Turn off the LCD bias generator
+  display.sysOff(); // Turn off the HT1621 system oscillator (chip itself)
+
+  // --- Power down peripherals ---
+  // Disable ADC
+  byte oldADCSRA = ADCSRA; // Save ADC Control and Status Register A
+  ADCSRA &= ~(1 << ADEN);  // Disable ADC
+
+  // Set unused pins to INPUT_PULLUP
+  // Iterate through all possible digital pins (0-19, where 14-19 are A0-A5)
+  for (int i = 0; i <= 19; i++) {
+    // Skip pins that are actively used
+    if (i == MINUTE_BUTTON_PIN || i == SECOND_BUTTON_PIN || i == START_STOP_BUTTON_PIN ||
+        i == BUZZER_PIN || i == DATA_PIN || i == WR_PIN || i == CS_PIN) {
+      continue;
+    }
+    pinMode(i, INPUT_PULLUP);
+  }
+
   set_sleep_mode(SLEEP_MODE_PWR_DOWN);
   sleep_enable();
   sleep_cpu();    // Enter sleep mode. Execution resumes here after an interrupt.
 
   // --- CPU WAKES UP HERE ---
   sleep_disable();
-  // After waking, reset the activity timer to stay awake for the timeout period
+
+  // --- Power up peripherals ---
+  // Used pins will be reconfigured by their respective functions (e.g., display.begin(), buzzer.begin())
+  display.sysOn(); // Turn on the HT1621 system oscillator
+  display.lcdOn(); // Turn the LCD bias generator back on
+  updateDisplay(); // Refresh the display with current data
   lastActivityTime = millis();
 }
 
 void setup() {
   // --- Pin Modes ---
-  pinMode(MINUTE_BUTTON_PIN, INPUT);
-  pinMode(SECOND_BUTTON_PIN, INPUT);
-  pinMode(START_STOP_BUTTON_PIN, INPUT);
+  pinMode(MINUTE_BUTTON_PIN, INPUT_PULLUP);
+  pinMode(SECOND_BUTTON_PIN, INPUT_PULLUP);
+  pinMode(START_STOP_BUTTON_PIN, INPUT_PULLUP);
   
   // --- Display ---
   display.begin();
@@ -94,10 +116,10 @@ void loop() {
         seconds = 59;
       } else {
         timerRunning = false;
-        playRTTTL(song);
-    buzzer.stop(); // Explicitly stop the tone generator
-    pinMode(BUZZER_PIN, INPUT); // Set pin to high-impedance to save power
-    lastActivityTime = millis(); // Reset inactivity timer
+            playRTTTL(song);
+            buzzer.stop();
+            pinMode(BUZZER_PIN, INPUT);
+            lastActivityTime = millis();
       }
       updateDisplay();
     }
@@ -174,7 +196,6 @@ void handleButtons() {
 // --- RTTTL Player Functions ---
 
 void playRTTTL(char *p) {
-  pinMode(BUZZER_PIN, OUTPUT); // Ensure pin is ready for output
   int default_dur = 4;
   int default_oct = 6;
   int bpm = 63;
