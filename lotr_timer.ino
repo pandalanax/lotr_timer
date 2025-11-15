@@ -1,5 +1,6 @@
 #include "HT1621.h"
 #include <Tone.h>
+#include <avr/sleep.h>
 
 // Pin Definitions
 #define BUZZER_PIN 12
@@ -31,6 +32,29 @@ int lastStartStopButtonState = HIGH;
 unsigned long lastDebounceTime = 0;
 unsigned long debounceDelay = 50;
 
+// Sleep and activity management
+unsigned long lastActivityTime = 0;
+const unsigned long awakeTimeout = 15000; // Stay awake for 15 seconds of inactivity
+
+// ISR for waking up from sleep
+void wakeUp() {
+  // This function is intentionally empty. Its only purpose is to
+  // provide a vector for the interrupt to wake the CPU.
+}
+
+void goToSleep() {
+  // This function prepares for and enters sleep.
+  updateDisplay(); // Final display update before sleeping
+  set_sleep_mode(SLEEP_MODE_PWR_DOWN);
+  sleep_enable();
+  sleep_cpu();    // Enter sleep mode. Execution resumes here after an interrupt.
+
+  // --- CPU WAKES UP HERE ---
+  sleep_disable();
+  // After waking, reset the activity timer to stay awake for the timeout period
+  lastActivityTime = millis();
+}
+
 void setup() {
   // --- Pin Modes ---
   pinMode(MINUTE_BUTTON_PIN, INPUT);
@@ -44,12 +68,23 @@ void setup() {
 
   // --- Buzzer ---
   buzzer.begin(BUZZER_PIN);
+
+  // --- Interrupts for Wake-up ---
+  // Use interrupt numbers 0 and 1 for ATmega8 compatibility.
+  attachInterrupt(0, wakeUp, LOW); // INT0 on Pin 2 (Minute Button)
+  attachInterrupt(1, wakeUp, LOW); // INT1 on Pin 3 (Second Button)
+
+  // Initialize activity timer
+  lastActivityTime = millis();
 }
 
 void loop() {
   handleButtons();
 
   if (timerRunning) {
+    // If timer is running, keep the device awake
+    lastActivityTime = millis();
+
     if (millis() - lastTick >= 1000) {
       lastTick = millis();
       if (seconds > 0) {
@@ -60,8 +95,16 @@ void loop() {
       } else {
         timerRunning = false;
         playRTTTL(song);
+    buzzer.stop(); // Explicitly stop the tone generator
+    pinMode(BUZZER_PIN, INPUT); // Set pin to high-impedance to save power
+    lastActivityTime = millis(); // Reset inactivity timer
       }
       updateDisplay();
+    }
+  } else {
+    // If timer is not running, check for inactivity and go to sleep
+    if (millis() - lastActivityTime > awakeTimeout) {
+      goToSleep();
     }
   }
 }
@@ -86,14 +129,15 @@ void handleButtons() {
 
   // Check if the button state has changed and enough time has passed to ignore noise
   if ((millis() - lastDebounceTime) > debounceDelay) {
+    bool activity = false;
+    
     // --- Handle Minute Button ---
-    // A press is detected on the transition from HIGH to LOW
     if (minuteReading == LOW && lastMinuteButtonState == HIGH) {
       if (!timerRunning) {
         minutes = (minutes + 1) % 60;
         updateDisplay();
       }
-      lastDebounceTime = millis(); // Reset debounce timer
+      activity = true;
     }
 
     // --- Handle Second Button ---
@@ -102,7 +146,7 @@ void handleButtons() {
         seconds = (seconds + 1) % 60;
         updateDisplay();
       }
-      lastDebounceTime = millis(); // Reset debounce timer
+      activity = true;
     }
 
     // --- Handle Start/Stop Button ---
@@ -111,7 +155,13 @@ void handleButtons() {
       if (timerRunning) {
         lastTick = millis();
       }
-      lastDebounceTime = millis(); // Reset debounce timer
+      activity = true;
+    }
+
+    if (activity) {
+      // Any button press is considered activity
+      lastActivityTime = millis();
+      lastDebounceTime = millis();
     }
   }
 
@@ -124,6 +174,7 @@ void handleButtons() {
 // --- RTTTL Player Functions ---
 
 void playRTTTL(char *p) {
+  pinMode(BUZZER_PIN, OUTPUT); // Ensure pin is ready for output
   int default_dur = 4;
   int default_oct = 6;
   int bpm = 63;
