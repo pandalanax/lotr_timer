@@ -7,6 +7,10 @@
 #define WR_PIN   13 // Display WR   -> PB5
 #define CS_PIN   10 // Display CS   -> PB2
 
+#define MINUTE_BUTTON_PIN 2
+#define SECOND_BUTTON_PIN 3
+#define START_STOP_BUTTON_PIN 4
+
 // Object Instances
 Tone buzzer;
 HT1621 display(DATA_PIN, WR_PIN, CS_PIN);
@@ -14,37 +18,107 @@ HT1621 display(DATA_PIN, WR_PIN, CS_PIN);
 // RTTTL Song Data
 char song[] = "LordOfTh:d=4,o=6,b=160:2a5,2g5,8g5,8g5,1a5,8d,8e,2f,8e,8d,2c,8d,8e,2d.,2c,b5,2a5,2g5,8g5,8g5,1a5,8d,8e,2f,8e,8d,2c,d,2e.,2e.,e";
 
+// Timer variables
+int minutes = 0;
+int seconds = 0;
+bool timerRunning = false;
+unsigned long lastTick = 0;
+
+// Button state management
+int lastMinuteButtonState = HIGH;
+int lastSecondButtonState = HIGH;
+int lastStartStopButtonState = HIGH;
+unsigned long lastDebounceTime = 0;
+unsigned long debounceDelay = 50;
+
 void setup() {
-  // --- Display Countdown ---
+  // --- Pin Modes ---
+  pinMode(MINUTE_BUTTON_PIN, INPUT);
+  pinMode(SECOND_BUTTON_PIN, INPUT);
+  pinMode(START_STOP_BUTTON_PIN, INPUT);
+  
+  // --- Display ---
   display.begin();
   display.clear();
-  
-  // Countdown from 10 down to 0, displayed as mm:ss
-  for (int i = 10; i >= 0; i--) {
-    int minutes = 0;
-    int seconds = i;
+  updateDisplay();
 
-    int m1 = minutes / 10;
-    int m2 = minutes % 10;
-    int s1 = seconds / 10;
-    int s2 = seconds % 10;
-    
-    // Write to the digits in the correct physical order (3, 2, 1, 0)
-    display.writeDigit(3, m1);        // Left-most digit
-    display.writeDigit(2, m2);        // Second digit
-    display.writeDigit(1, s1);        // Third digit
-    display.writeDigit(0, s2, true);  // Right-most digit (with colon)
-    delay(1000);
-  }
-  display.clear();
-
-  // --- Play Melody ---
+  // --- Buzzer ---
   buzzer.begin(BUZZER_PIN);
-  playRTTTL(song);
 }
 
 void loop() {
-  // Nothing to do here
+  handleButtons();
+
+  if (timerRunning) {
+    if (millis() - lastTick >= 1000) {
+      lastTick = millis();
+      if (seconds > 0) {
+        seconds--;
+      } else if (minutes > 0) {
+        minutes--;
+        seconds = 59;
+      } else {
+        timerRunning = false;
+        playRTTTL(song);
+      }
+      updateDisplay();
+    }
+  }
+}
+
+void updateDisplay() {
+  int m1 = minutes / 10;
+  int m2 = minutes % 10;
+  int s1 = seconds / 10;
+  int s2 = seconds % 10;
+
+  display.writeDigit(3, m1);
+  display.writeDigit(2, m2);
+  display.writeDigit(1, s1);
+  display.writeDigit(0, s2, true);
+}
+
+void handleButtons() {
+  // Read the current state of the buttons
+  int minuteReading = digitalRead(MINUTE_BUTTON_PIN);
+  int secondReading = digitalRead(SECOND_BUTTON_PIN);
+  int startStopReading = digitalRead(START_STOP_BUTTON_PIN);
+
+  // Check if the button state has changed and enough time has passed to ignore noise
+  if ((millis() - lastDebounceTime) > debounceDelay) {
+    // --- Handle Minute Button ---
+    // A press is detected on the transition from HIGH to LOW
+    if (minuteReading == LOW && lastMinuteButtonState == HIGH) {
+      if (!timerRunning) {
+        minutes = (minutes + 1) % 60;
+        updateDisplay();
+      }
+      lastDebounceTime = millis(); // Reset debounce timer
+    }
+
+    // --- Handle Second Button ---
+    if (secondReading == LOW && lastSecondButtonState == HIGH) {
+      if (!timerRunning) {
+        seconds = (seconds + 1) % 60;
+        updateDisplay();
+      }
+      lastDebounceTime = millis(); // Reset debounce timer
+    }
+
+    // --- Handle Start/Stop Button ---
+    if (startStopReading == LOW && lastStartStopButtonState == HIGH) {
+      timerRunning = !timerRunning;
+      if (timerRunning) {
+        lastTick = millis();
+      }
+      lastDebounceTime = millis(); // Reset debounce timer
+    }
+  }
+
+  // Save the current button states for the next loop
+  lastMinuteButtonState = minuteReading;
+  lastSecondButtonState = secondReading;
+  lastStartStopButtonState = startStopReading;
 }
 
 // --- RTTTL Player Functions ---
